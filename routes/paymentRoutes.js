@@ -14,6 +14,7 @@ const getStripe = () => {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
 };
 
+// Create Stripe Checkout Session
 router.post("/create-checkout-session", verifyToken, async (req, res) => {
   try {
     const user = req.user;
@@ -38,6 +39,7 @@ router.post("/create-checkout-session", verifyToken, async (req, res) => {
     const session = await getStripe().checkout.sessions.create({
       mode: "payment",
       customer_email: user.email,
+
       line_items: [
         {
           price_data: {
@@ -51,11 +53,16 @@ router.post("/create-checkout-session", verifyToken, async (req, res) => {
           quantity: 1,
         },
       ],
+
       metadata: {
         userId: user.id,
+        userName: user.name || "",
+        userEmail: user.email || "",
         role: user.role,
         plan: "pro",
+        planName,
       },
+
       success_url: `${process.env.CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/payment/cancel`,
     });
@@ -75,6 +82,7 @@ router.post("/create-checkout-session", verifyToken, async (req, res) => {
   }
 });
 
+// Stripe Webhook
 router.post("/webhook", async (req, res) => {
   let event;
 
@@ -108,7 +116,14 @@ router.post("/webhook", async (req, res) => {
         return res.status(200).json({ received: true });
       }
 
-      const { userId, role, plan } = session.metadata || {};
+      const {
+        userId,
+        userName,
+        userEmail,
+        role,
+        plan,
+        planName,
+      } = session.metadata || {};
 
       if (
         !userId ||
@@ -136,6 +151,7 @@ router.post("/webhook", async (req, res) => {
 
       const db = getAppDb();
 
+      // Verify user and upgrade plan
       const userResult = await db.collection("users").updateOne(
         {
           _id: userId,
@@ -157,21 +173,49 @@ router.post("/webhook", async (req, res) => {
         });
       }
 
+      // Save payment with Assignment-required fields
+      const paidAt = session.created
+        ? new Date(session.created * 1000)
+        : new Date();
+
+      const paymentEmail =
+        userEmail ||
+        session.customer_details?.email ||
+        session.customer_email ||
+        "";
+
+      const paymentName =
+        userName ||
+        session.customer_details?.name ||
+        "Unknown User";
+
+      const transactionId =
+        typeof session.payment_intent === "string"
+          ? session.payment_intent
+          : session.payment_intent?.id || session.id;
+
       await db.collection("payments").updateOne(
         { stripeSessionId: session.id },
         {
           $setOnInsert: {
-            stripeSessionId: session.id,
+            // Assignment required fields
             userId,
-            email:
-              session.customer_details?.email ||
-              session.customer_email,
-            role,
-            plan,
+            userName: paymentName,
+            userEmail: paymentEmail,
+            userRole: role,
+            planName: planName || (role === "tutor" ? "Pro Tutor" : "Pro Student"),
             amount: expectedAmount / 100,
             currency: session.currency,
+            transactionId,
+            stripeSessionId: session.id,
             paymentStatus: "paid",
-            createdAt: new Date(),
+            paidAt,
+
+            // Backward compatibility with existing frontend
+            email: paymentEmail,
+            role,
+            plan,
+            createdAt: paidAt,
           },
         },
         { upsert: true }
@@ -189,6 +233,7 @@ router.post("/webhook", async (req, res) => {
   }
 });
 
+// Get current user's payment history
 router.get("/my-payments", verifyToken, async (req, res) => {
   try {
     const payments = await getAppDb()

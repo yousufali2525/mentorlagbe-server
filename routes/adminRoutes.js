@@ -1,5 +1,6 @@
 
 import express from "express";
+import { ObjectId } from "mongodb";
 import { getAppDb } from "../config/db.js";
 import {
   verifyToken,
@@ -10,7 +11,6 @@ const router = express.Router();
 
 router.use(verifyToken, verifyAdmin);
 
-// Admin dashboard statistics
 router.get("/stats", async (req, res) => {
   try {
     const db = getAppDb();
@@ -41,15 +41,18 @@ router.get("/stats", async (req, res) => {
       db.collection("payments").countDocuments({ paymentStatus: "paid" }),
     ]);
 
-    const revenueResult = await db.collection("payments").aggregate([
-      { $match: { paymentStatus: "paid" } },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: "$amount" },
+    const revenueResult = await db
+      .collection("payments")
+      .aggregate([
+        { $match: { paymentStatus: "paid" } },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: "$amount" },
+          },
         },
-      },
-    ]).toArray();
+      ])
+      .toArray();
 
     res.status(200).json({
       success: true,
@@ -69,6 +72,8 @@ router.get("/stats", async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Admin stats error:", error);
+
     res.status(500).json({
       success: false,
       message: "Failed to fetch dashboard statistics",
@@ -76,13 +81,15 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-// Get all users
 router.get("/users", async (req, res) => {
   try {
     const db = getAppDb();
 
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(
+      50,
+      Math.max(1, parseInt(req.query.limit, 10) || 10)
+    );
     const skip = (page - 1) * limit;
 
     const filter = {};
@@ -92,15 +99,24 @@ router.get("/users", async (req, res) => {
     }
 
     if (req.query.search) {
-      const search = String(req.query.search).trim();
-      filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-      ];
+      const search = String(req.query.search).trim().slice(0, 100);
+
+      if (search) {
+        const escapedSearch = search.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&"
+        );
+
+        filter.$or = [
+          { name: { $regex: escapedSearch, $options: "i" } },
+          { email: { $regex: escapedSearch, $options: "i" } },
+        ];
+      }
     }
 
     const [users, totalUsers] = await Promise.all([
-      db.collection("users")
+      db
+        .collection("users")
         .find(filter, {
           projection: {
             name: 1,
@@ -130,6 +146,8 @@ router.get("/users", async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Admin users error:", error);
+
     res.status(500).json({
       success: false,
       message: "Failed to fetch users",
@@ -137,7 +155,6 @@ router.get("/users", async (req, res) => {
   }
 });
 
-// Activate or deactivate a user
 router.patch("/users/:id/status", async (req, res) => {
   try {
     const { isActive } = req.body;
@@ -149,22 +166,33 @@ router.patch("/users/:id/status", async (req, res) => {
       });
     }
 
-    if (req.params.id === req.user.id) {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID",
+      });
+    }
+
+    const userId = new ObjectId(req.params.id);
+
+    if (userId.toString() === req.user.id.toString()) {
       return res.status(400).json({
         success: false,
         message: "You cannot deactivate your own account",
       });
     }
 
-    const result = await getAppDb().collection("users").updateOne(
-      { _id: req.params.id },
-      {
-        $set: {
-          isActive,
-          updatedAt: new Date(),
-        },
-      }
-    );
+    const result = await getAppDb()
+      .collection("users")
+      .updateOne(
+        { _id: userId },
+        {
+          $set: {
+            isActive,
+            updatedAt: new Date(),
+          },
+        }
+      );
 
     if (result.matchedCount === 0) {
       return res.status(404).json({
@@ -178,6 +206,8 @@ router.patch("/users/:id/status", async (req, res) => {
       message: `User ${isActive ? "activated" : "deactivated"} successfully`,
     });
   } catch (error) {
+    console.error("Admin user status error:", error);
+
     res.status(500).json({
       success: false,
       message: "Failed to update user status",
@@ -185,12 +215,12 @@ router.patch("/users/:id/status", async (req, res) => {
   }
 });
 
-// Get pending tuition posts
 router.get("/tuitions/pending", async (req, res) => {
   try {
     const db = getAppDb();
 
-    const tuitions = await db.collection("tuitions")
+    const tuitions = await db
+      .collection("tuitions")
       .find({ approvalStatus: "pending" })
       .sort({ createdAt: -1 })
       .toArray();
@@ -201,6 +231,8 @@ router.get("/tuitions/pending", async (req, res) => {
       tuitions,
     });
   } catch (error) {
+    console.error("Admin pending tuitions error:", error);
+
     res.status(500).json({
       success: false,
       message: "Failed to fetch pending tuitions",
@@ -208,17 +240,20 @@ router.get("/tuitions/pending", async (req, res) => {
   }
 });
 
-// Get payment transactions
 router.get("/payments", async (req, res) => {
   try {
     const db = getAppDb();
 
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(
+      50,
+      Math.max(1, parseInt(req.query.limit, 10) || 10)
+    );
     const skip = (page - 1) * limit;
 
     const [payments, totalPayments] = await Promise.all([
-      db.collection("payments")
+      db
+        .collection("payments")
         .find({})
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -238,6 +273,8 @@ router.get("/payments", async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Admin payments error:", error);
+
     res.status(500).json({
       success: false,
       message: "Failed to fetch payment transactions",

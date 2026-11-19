@@ -67,7 +67,8 @@ router.post("/", verifyToken, verifyStudent, async (req, res) => {
       studentName: req.user.name,
       studentEmail: req.user.email,
       tutorId: tuition.tutorId,
-      tutorEmail: tuition.tutorEmail,
+      tutorName: tuition.tutorName || "",
+      tutorEmail: tuition.tutorEmail || "",
       message: message ? message.trim() : "",
       status: "pending",
       createdAt: new Date(),
@@ -92,6 +93,8 @@ router.post("/", verifyToken, verifyStudent, async (req, res) => {
       });
     }
 
+    console.error("Application Submit Error:", error.message);
+
     res.status(500).json({
       success: false,
       message: "Failed to submit application",
@@ -101,21 +104,117 @@ router.post("/", verifyToken, verifyStudent, async (req, res) => {
 
 router.get("/my-applications", verifyToken, verifyStudent, async (req, res) => {
   try {
-    const applications = await getAppDb()
+    const db = getAppDb();
+
+    const applications = await db
       .collection("applications")
       .find({ studentId: req.user.id })
       .sort({ createdAt: -1 })
       .toArray();
 
+    const enrichedApplications = await Promise.all(
+      applications.map(async (application) => {
+        let tuition = null;
+
+        if (
+          application.tuitionId &&
+          ObjectId.isValid(application.tuitionId)
+        ) {
+          tuition = await db.collection("tuitions").findOne({
+            _id: new ObjectId(application.tuitionId),
+          });
+        }
+
+        return {
+          ...application,
+          tuition: tuition
+            ? {
+                _id: tuition._id,
+                title: tuition.title || "Tuition Application",
+                subject: tuition.subject || "Subject unavailable",
+                monthlyFee: tuition.salary ?? tuition.monthlyFee,
+                tutorName:
+                  tuition.tutorName ||
+                  application.tutorName ||
+                  "Not available",
+                tutorEmail:
+                  tuition.tutorEmail ||
+                  application.tutorEmail ||
+                  "Not available",
+              }
+            : null,
+          tutorName:
+            tuition?.tutorName ||
+            application.tutorName ||
+            application.tutorEmail ||
+            "Not available",
+          tutorEmail:
+            tuition?.tutorEmail ||
+            application.tutorEmail ||
+            "Not available",
+          tuitionTitle:
+            tuition?.title ||
+            application.tuitionTitle ||
+            "Tuition Application",
+          subject:
+            tuition?.subject ||
+            application.subject ||
+            "Subject unavailable",
+          monthlyFee:
+            tuition?.salary ??
+            tuition?.monthlyFee ??
+            application.monthlyFee,
+        };
+      })
+    );
+
     res.status(200).json({
       success: true,
-      total: applications.length,
-      data: applications,
+      total: enrichedApplications.length,
+      data: enrichedApplications,
     });
   } catch (error) {
+    console.error("Fetch Applications Error:", error.message);
+
     res.status(500).json({
       success: false,
       message: "Failed to fetch applications",
+    });
+  }
+});
+
+router.delete("/:id", verifyToken, verifyStudent, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid application ID",
+      });
+    }
+
+    const result = await getAppDb().collection("applications").deleteOne({
+      _id: new ObjectId(req.params.id),
+      studentId: req.user.id,
+      status: "pending",
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Pending application not found or cannot be cancelled",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Application cancelled successfully",
+    });
+  } catch (error) {
+    console.error("Cancel Application Error:", error.message);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to cancel application",
     });
   }
 });
@@ -134,6 +233,8 @@ router.get("/tutor-applicants", verifyToken, verifyTutor, async (req, res) => {
       data: applications,
     });
   } catch (error) {
+    console.error("Fetch Applicants Error:", error.message);
+
     res.status(500).json({
       success: false,
       message: "Failed to fetch applicants",
@@ -185,6 +286,8 @@ router.patch("/:id/status", verifyToken, verifyTutor, async (req, res) => {
       message: `Application ${status} successfully`,
     });
   } catch (error) {
+    console.error("Update Application Error:", error.message);
+
     res.status(500).json({
       success: false,
       message: "Failed to update application",
