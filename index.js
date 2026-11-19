@@ -18,9 +18,26 @@ import adminRoutes from "./routes/adminRoutes.js";
 
 const app = express();
 
+const allowedOrigins = (process.env.CLIENT_URL || "")
+  .split(",")
+  .map((url) => url.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL,
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      const normalizedOrigin = origin.replace(/\/$/, "");
+
+      if (allowedOrigins.includes(normalizedOrigin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
   })
 );
@@ -66,6 +83,7 @@ const startServer = async () => {
 
     app.listen(PORT, () => {
       console.log(`MentorLagbe Server running on port ${PORT}`);
+      console.log("Allowed frontend origins:", allowedOrigins);
     });
   } catch (error) {
     console.error("Server Startup Failed:", error.message);
