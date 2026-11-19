@@ -21,6 +21,14 @@ const initializeAuth = () => {
     secret: process.env.BETTER_AUTH_SECRET,
     trustedOrigins,
 
+    advanced: {
+      defaultCookieAttributes: {
+        sameSite: "none",
+        secure: true,
+        httpOnly: true,
+      },
+    },
+
     database: mongodbAdapter(getAuthDb(), {
       client,
     }),
