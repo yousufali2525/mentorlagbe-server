@@ -10,11 +10,16 @@ import {
 let auth;
 
 const initializeAuth = () => {
+  const trustedOrigins = (process.env.CLIENT_URL || "")
+    .split(",")
+    .map((url) => url.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+
   auth = betterAuth({
     appName: "MentorLagbe",
     baseURL: process.env.BETTER_AUTH_URL,
     secret: process.env.BETTER_AUTH_SECRET,
-    trustedOrigins: [process.env.CLIENT_URL],
+    trustedOrigins,
 
     database: mongodbAdapter(getAuthDb(), {
       client,
