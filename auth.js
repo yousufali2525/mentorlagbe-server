@@ -19,7 +19,11 @@ const initializeAuth = () => {
     appName: "MentorLagbe",
     baseURL: process.env.BETTER_AUTH_URL,
     secret: process.env.BETTER_AUTH_SECRET,
-    trustedOrigins,
+
+    trustedOrigins: [
+      ...trustedOrigins,
+      "https://mentor-lagbe-client-7e96b3zbg-22-cc8a.vercel.app",
+    ],
 
     advanced: {
       defaultCookieAttributes: {
