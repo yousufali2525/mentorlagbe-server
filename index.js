@@ -23,7 +23,9 @@ const allowedOrigins = (process.env.CLIENT_URL || "")
   .map((url) => url.trim().replace(/\/+$/, ""))
   .filter(Boolean);
 
-// CORS configuration
+const vercelOriginPattern =
+  /^https:\/\/mentor-lagbe-client-[a-z0-9-]+\.vercel\.app$/;
+
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -33,7 +35,10 @@ app.use(
 
       const normalizedOrigin = origin.replace(/\/+$/, "");
 
-      if (allowedOrigins.includes(normalizedOrigin)) {
+      if (
+        allowedOrigins.includes(normalizedOrigin) ||
+        vercelOriginPattern.test(normalizedOrigin)
+      ) {
         return callback(null, true);
       }
 
@@ -69,10 +74,8 @@ const startServer = async () => {
 
     initializeAuth();
 
-    // Better Auth routes
     app.all("/api/auth/*", toNodeHandler(getAuth()));
 
-    // Stripe webhook
     app.use(
       "/api/payments/webhook",
       express.raw({ type: "application/json" })
@@ -80,7 +83,6 @@ const startServer = async () => {
 
     app.use(express.json({ limit: "12mb" }));
 
-    // Application routes
     app.use("/api/tuitions", tuitionRoutes);
     app.use("/api/applications", applicationRoutes);
     app.use("/api/payments", paymentRoutes);
@@ -92,6 +94,7 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`MentorLagbe Server running on port ${PORT}`);
       console.log("Allowed frontend origins:", allowedOrigins);
+      console.log("Vercel preview origins are also allowed.");
     });
   } catch (error) {
     console.error("Server Startup Failed:", error.message);

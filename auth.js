@@ -25,6 +25,7 @@ const initializeAuth = () => {
       ...new Set([
         ...trustedOrigins,
         "https://mentor-lagbe-client-rouge.vercel.app",
+        "https://mentor-lagbe-client-*.vercel.app",
       ]),
     ],
 
