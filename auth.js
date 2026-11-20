@@ -17,12 +17,15 @@ const initializeAuth = () => {
 
   auth = betterAuth({
     appName: "MentorLagbe",
+
     baseURL: process.env.BETTER_AUTH_URL,
     secret: process.env.BETTER_AUTH_SECRET,
 
     trustedOrigins: [
-      ...trustedOrigins,
-      "https://mentor-lagbe-client-rouge.vercel.app",
+      ...new Set([
+        ...trustedOrigins,
+        "https://mentor-lagbe-client-rouge.vercel.app",
+      ]),
     ],
 
     advanced: {

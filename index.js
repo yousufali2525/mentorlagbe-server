@@ -23,6 +23,7 @@ const allowedOrigins = (process.env.CLIENT_URL || "")
   .map((url) => url.trim().replace(/\/+$/, ""))
   .filter(Boolean);
 
+// CORS configuration
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -36,14 +37,7 @@ app.use(
         return callback(null, true);
       }
 
-      const isAllowedVercelPreview =
-        /^https:\/\/mentor-lagbe-client-[a-z0-9-]+-22-cc8a\.vercel\.app$/i.test(
-          normalizedOrigin
-        );
-
-      if (isAllowedVercelPreview) {
-        return callback(null, true);
-      }
+      console.error("CORS blocked origin:", origin);
 
       return callback(
         new Error(`CORS blocked for origin: ${origin}`)
@@ -75,8 +69,10 @@ const startServer = async () => {
 
     initializeAuth();
 
+    // Better Auth routes
     app.all("/api/auth/*", toNodeHandler(getAuth()));
 
+    // Stripe webhook
     app.use(
       "/api/payments/webhook",
       express.raw({ type: "application/json" })
@@ -84,6 +80,7 @@ const startServer = async () => {
 
     app.use(express.json({ limit: "12mb" }));
 
+    // Application routes
     app.use("/api/tuitions", tuitionRoutes);
     app.use("/api/applications", applicationRoutes);
     app.use("/api/payments", paymentRoutes);
