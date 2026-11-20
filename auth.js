@@ -22,7 +22,7 @@ const initializeAuth = () => {
 
     trustedOrigins: [
       ...trustedOrigins,
-      "https://mentor-lagbe-client-7e96b3zbg-22-cc8a.vercel.app",
+      "https://mentor-lagbe-client-rouge.vercel.app",
     ],
 
     advanced: {
