@@ -12,7 +12,7 @@ let auth;
 const initializeAuth = () => {
   const trustedOrigins = (process.env.CLIENT_URL || "")
     .split(",")
-    .map((url) => url.trim().replace(/\/$/, ""))
+    .map((url) => url.trim().replace(/\/+$/, ""))
     .filter(Boolean);
 
   auth = betterAuth({

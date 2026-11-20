@@ -13,14 +13,20 @@ const router = express.Router();
 const validTuition = (data) => {
   return (
     typeof data.title === "string" &&
-    data.title.trim() &&
+    data.title.trim().length > 0 &&
     typeof data.subject === "string" &&
-    data.subject.trim() &&
+    data.subject.trim().length > 0 &&
+    typeof data.classLevel === "string" &&
+    data.classLevel.trim().length > 0 &&
+    ["Online", "Offline"].includes(data.mode) &&
     typeof data.description === "string" &&
-    data.description.trim() &&
+    data.description.trim().length > 0 &&
     typeof data.location === "string" &&
-    data.location.trim() &&
-    Number(data.salary) > 0
+    data.location.trim().length > 0 &&
+    Number(data.salary) > 0 &&
+    Number.isInteger(Number(data.daysPerWeek)) &&
+    Number(data.daysPerWeek) >= 1 &&
+    Number(data.daysPerWeek) <= 7
   );
 };
 
@@ -38,12 +44,21 @@ router.get("/", async (req, res) => {
         { title: { $regex: search, $options: "i" } },
         { description: { $regex: search, $options: "i" } },
         { subject: { $regex: search, $options: "i" } },
+        { classLevel: { $regex: search, $options: "i" } },
       ];
     }
 
-    if (subject) filter.subject = { $regex: subject, $options: "i" };
-    if (location) filter.location = { $regex: location, $options: "i" };
-    if (category) filter.category = category;
+    if (subject) {
+      filter.subject = { $regex: subject, $options: "i" };
+    }
+
+    if (location) {
+      filter.location = { $regex: location, $options: "i" };
+    }
+
+    if (category) {
+      filter.category = category;
+    }
 
     const tuitions = await getAppDb()
       .collection("tuitions")
@@ -127,7 +142,7 @@ router.post("/", verifyToken, verifyTutor, async (req, res) => {
     if (!validTuition(data)) {
       return res.status(400).json({
         success: false,
-        message: "Please provide valid tuition information",
+        message: "Please provide all required tuition information",
       });
     }
 
@@ -149,9 +164,12 @@ router.post("/", verifyToken, verifyTutor, async (req, res) => {
     const tuition = {
       title: data.title.trim(),
       subject: data.subject.trim(),
-      description: data.description.trim(),
+      classLevel: data.classLevel.trim(),
+      mode: data.mode,
       location: data.location.trim(),
       salary: Number(data.salary),
+      daysPerWeek: Number(data.daysPerWeek),
+      description: data.description.trim(),
       category: data.category || "General",
       banner: data.banner || "",
       tutorId: req.user.id,
@@ -168,9 +186,14 @@ router.post("/", verifyToken, verifyTutor, async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Tuition submitted for admin approval",
-      tuition: { ...tuition, _id: result.insertedId },
+      tuition: {
+        ...tuition,
+        _id: result.insertedId,
+      },
     });
   } catch (error) {
+    console.error("Create Tuition Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Failed to create tuition",
@@ -192,7 +215,7 @@ router.patch("/:id", verifyToken, verifyTutor, async (req, res) => {
     if (!validTuition(data)) {
       return res.status(400).json({
         success: false,
-        message: "Please provide valid tuition information",
+        message: "Please provide all required tuition information",
       });
     }
 
@@ -205,9 +228,12 @@ router.patch("/:id", verifyToken, verifyTutor, async (req, res) => {
         $set: {
           title: data.title.trim(),
           subject: data.subject.trim(),
-          description: data.description.trim(),
+          classLevel: data.classLevel.trim(),
+          mode: data.mode,
           location: data.location.trim(),
           salary: Number(data.salary),
+          daysPerWeek: Number(data.daysPerWeek),
+          description: data.description.trim(),
           category: data.category || "General",
           banner: data.banner || "",
           approvalStatus: "pending",

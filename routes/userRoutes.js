@@ -40,6 +40,8 @@ router.get("/me", verifyToken, async (req, res) => {
       user,
     });
   } catch (error) {
+    console.error("Profile Fetch Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Failed to fetch profile",
@@ -49,10 +51,6 @@ router.get("/me", verifyToken, async (req, res) => {
 
 router.patch("/me", verifyToken, async (req, res) => {
   try {
-    const { name, phone, location, bio, profileImage } = req.body;
-
-    const updateData = {};
-
     const fields = {
       name: 100,
       phone: 20,
@@ -60,6 +58,8 @@ router.patch("/me", verifyToken, async (req, res) => {
       bio: 1000,
       profileImage: 2048,
     };
+
+    const updateData = {};
 
     for (const [field, maxLength] of Object.entries(fields)) {
       const value = req.body[field];
@@ -128,11 +128,11 @@ router.patch("/me", verifyToken, async (req, res) => {
 
     const authUpdate = {};
 
-    if (name !== undefined) {
+    if (updateData.name !== undefined) {
       authUpdate.name = updateData.name;
     }
 
-    if (profileImage !== undefined) {
+    if (updateData.profileImage !== undefined) {
       authUpdate.image = updateData.profileImage || null;
     }
 
@@ -169,7 +169,7 @@ router.patch("/me", verifyToken, async (req, res) => {
       user: updatedUser,
     });
   } catch (error) {
-    console.error("Profile Update Error:", error.message);
+    console.error("Profile Update Error:", error);
 
     res.status(500).json({
       success: false,

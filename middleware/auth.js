@@ -13,7 +13,16 @@ const verifyToken = async (req, res, next) => {
       });
     }
 
-    const token = authHeader.split(" ")[1];
+    const token = authHeader.slice(7);
+
+    if (!process.env.JWT_SECRET) {
+      console.error("JWT_SECRET is not configured.");
+
+      return res.status(500).json({
+        success: false,
+        message: "Server authentication configuration error.",
+      });
+    }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET, {
       algorithms: ["HS256"],
@@ -21,7 +30,7 @@ const verifyToken = async (req, res, next) => {
 
     const userId = decoded.userId;
 
-    if (!userId) {
+    if (typeof userId !== "string" || !userId.trim()) {
       return res.status(401).json({
         success: false,
         message: "Invalid token.",
@@ -49,12 +58,18 @@ const verifyToken = async (req, res, next) => {
 
     next();
   } catch (error) {
-    if (error.name === "TokenExpiredError" || error.name === "JsonWebTokenError") {
+    if (
+      error.name === "TokenExpiredError" ||
+      error.name === "JsonWebTokenError" ||
+      error.name === "NotBeforeError"
+    ) {
       return res.status(401).json({
         success: false,
         message: "Invalid or expired token.",
       });
     }
+
+    console.error("Authentication Error:", error);
 
     return res.status(500).json({
       success: false,

@@ -20,7 +20,7 @@ const app = express();
 
 const allowedOrigins = (process.env.CLIENT_URL || "")
   .split(",")
-  .map((url) => url.trim().replace(/\/$/, ""))
+  .map((url) => url.trim().replace(/\/+$/, ""))
   .filter(Boolean);
 
 app.use(
@@ -30,13 +30,15 @@ app.use(
         return callback(null, true);
       }
 
-      const normalizedOrigin = origin.replace(/\/$/, "");
+      const normalizedOrigin = origin.replace(/\/+$/, "");
 
       if (allowedOrigins.includes(normalizedOrigin)) {
         return callback(null, true);
       }
 
-      return callback(new Error(`CORS blocked for origin: ${origin}`));
+      return callback(
+        new Error(`CORS blocked for origin: ${origin}`)
+      );
     },
     credentials: true,
   })

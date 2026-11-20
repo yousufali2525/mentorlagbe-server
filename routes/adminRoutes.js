@@ -1,6 +1,5 @@
 
 import express from "express";
-import { ObjectId } from "mongodb";
 import { getAppDb } from "../config/db.js";
 import {
   verifyToken,
@@ -73,7 +72,6 @@ router.get("/stats", async (req, res) => {
     });
   } catch (error) {
     console.error("Admin stats error:", error);
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch dashboard statistics",
@@ -84,12 +82,8 @@ router.get("/stats", async (req, res) => {
 router.get("/users", async (req, res) => {
   try {
     const db = getAppDb();
-
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(
-      50,
-      Math.max(1, parseInt(req.query.limit, 10) || 10)
-    );
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const skip = (page - 1) * limit;
 
     const filter = {};
@@ -115,8 +109,7 @@ router.get("/users", async (req, res) => {
     }
 
     const [users, totalUsers] = await Promise.all([
-      db
-        .collection("users")
+      db.collection("users")
         .find(filter, {
           projection: {
             name: 1,
@@ -147,7 +140,6 @@ router.get("/users", async (req, res) => {
     });
   } catch (error) {
     console.error("Admin users error:", error);
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch users",
@@ -166,40 +158,44 @@ router.patch("/users/:id/status", async (req, res) => {
       });
     }
 
-    if (!ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid user ID",
-      });
-    }
+    const userId = req.params.id;
+    const db = getAppDb();
 
-    const userId = new ObjectId(req.params.id);
-
-    if (userId.toString() === req.user.id.toString()) {
+    if (req.user?.id && userId === req.user.id.toString()) {
       return res.status(400).json({
         success: false,
         message: "You cannot deactivate your own account",
       });
     }
 
-    const result = await getAppDb()
-      .collection("users")
-      .updateOne(
-        { _id: userId },
-        {
-          $set: {
-            isActive,
-            updatedAt: new Date(),
-          },
-        }
-      );
+    const targetUser = await db.collection("users").findOne(
+      { _id: userId },
+      { projection: { role: 1 } }
+    );
 
-    if (result.matchedCount === 0) {
+    if (!targetUser) {
       return res.status(404).json({
         success: false,
         message: "User not found",
       });
     }
+
+    if (targetUser.role === "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin accounts cannot be deactivated here",
+      });
+    }
+
+    await db.collection("users").updateOne(
+      { _id: userId },
+      {
+        $set: {
+          isActive,
+          updatedAt: new Date(),
+        },
+      }
+    );
 
     res.status(200).json({
       success: true,
@@ -207,10 +203,65 @@ router.patch("/users/:id/status", async (req, res) => {
     });
   } catch (error) {
     console.error("Admin user status error:", error);
-
     res.status(500).json({
       success: false,
       message: "Failed to update user status",
+    });
+  }
+});
+
+router.patch("/users/:id/role", async (req, res) => {
+  try {
+    const { role } = req.body;
+
+    if (!["student", "tutor"].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: "Role must be student or tutor",
+      });
+    }
+
+    const userId = req.params.id;
+    const db = getAppDb();
+
+    const targetUser = await db.collection("users").findOne(
+      { _id: userId },
+      { projection: { role: 1 } }
+    );
+
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (targetUser.role === "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin role cannot be changed here",
+      });
+    }
+
+    await db.collection("users").updateOne(
+      { _id: userId },
+      {
+        $set: {
+          role,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "User role updated successfully",
+    });
+  } catch (error) {
+    console.error("Admin user role error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update user role",
     });
   }
 });
@@ -232,7 +283,6 @@ router.get("/tuitions/pending", async (req, res) => {
     });
   } catch (error) {
     console.error("Admin pending tuitions error:", error);
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch pending tuitions",
@@ -243,17 +293,12 @@ router.get("/tuitions/pending", async (req, res) => {
 router.get("/payments", async (req, res) => {
   try {
     const db = getAppDb();
-
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(
-      50,
-      Math.max(1, parseInt(req.query.limit, 10) || 10)
-    );
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const skip = (page - 1) * limit;
 
     const [payments, totalPayments] = await Promise.all([
-      db
-        .collection("payments")
+      db.collection("payments")
         .find({})
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -274,7 +319,6 @@ router.get("/payments", async (req, res) => {
     });
   } catch (error) {
     console.error("Admin payments error:", error);
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch payment transactions",

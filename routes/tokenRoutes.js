@@ -7,9 +7,15 @@ import { getAppDb } from "../config/db.js";
 
 const router = express.Router();
 
-// Generate JWT after BetterAuth login
 router.get("/", async (req, res) => {
   try {
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({
+        success: false,
+        message: "JWT_SECRET is not configured",
+      });
+    }
+
     const session = await getAuth().api.getSession({
       headers: fromNodeHeaders(req.headers),
     });
@@ -34,7 +40,7 @@ router.get("/", async (req, res) => {
 
     const token = jwt.sign(
       {
-        userId: user._id,
+        userId: String(user._id),
       },
       process.env.JWT_SECRET,
       {
@@ -43,7 +49,7 @@ router.get("/", async (req, res) => {
       }
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "JWT generated successfully",
       token,
@@ -56,9 +62,9 @@ router.get("/", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("JWT Generation Error:", error.message);
+    console.error("JWT Generation Error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to generate JWT",
     });
@@ -66,4 +72,3 @@ router.get("/", async (req, res) => {
 });
 
 export default router;
-
