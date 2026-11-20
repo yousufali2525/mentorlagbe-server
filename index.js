@@ -36,6 +36,15 @@ app.use(
         return callback(null, true);
       }
 
+      const isAllowedVercelPreview =
+        /^https:\/\/mentor-lagbe-client-[a-z0-9-]+-22-cc8a\.vercel\.app$/i.test(
+          normalizedOrigin
+        );
+
+      if (isAllowedVercelPreview) {
+        return callback(null, true);
+      }
+
       return callback(
         new Error(`CORS blocked for origin: ${origin}`)
       );
