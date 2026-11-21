@@ -23,54 +23,105 @@ const validTuition = (data) => {
     data.description.trim().length > 0 &&
     typeof data.location === "string" &&
     data.location.trim().length > 0 &&
-    Number(data.salary) > 0 &&
+    Number(data.monthlyFee ?? data.salary) > 0 &&
     Number.isInteger(Number(data.daysPerWeek)) &&
     Number(data.daysPerWeek) >= 1 &&
     Number(data.daysPerWeek) <= 7
   );
 };
 
+const normalizeTuition = (tuition) => {
+  if (!tuition || typeof tuition !== "object") return tuition;
+  const monthlyFee = tuition.monthlyFee ?? tuition.salary ?? null;
+  const bannerImage = tuition.bannerImage ?? tuition.banner ?? "";
+  return {
+    ...tuition,
+    monthlyFee,
+    salary: tuition.salary ?? monthlyFee,
+    bannerImage,
+    banner: tuition.banner ?? bannerImage,
+  };
+};
+
 router.get("/", async (req, res) => {
   try {
-    const { search, subject, location, category } = req.query;
+    const { search, subject, classLevel, mode, location, category } = req.query;
 
     const filter = {
       approvalStatus: "approved",
       isActive: true,
     };
 
+    const escapeRegex = (value) =>
+      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
     if (search) {
+      const searchRegex = { $regex: escapeRegex(search), $options: "i" };
       filter.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
-        { subject: { $regex: search, $options: "i" } },
-        { classLevel: { $regex: search, $options: "i" } },
+        { title: searchRegex },
+        { subject: searchRegex },
       ];
     }
 
     if (subject) {
-      filter.subject = { $regex: subject, $options: "i" };
+      filter.subject = { $regex: escapeRegex(subject), $options: "i" };
+    }
+
+    if (classLevel) {
+      filter.classLevel = { $regex: escapeRegex(classLevel), $options: "i" };
+    }
+
+    if (mode) {
+      filter.mode = { $regex: `^${escapeRegex(mode)}$`, $options: "i" };
     }
 
     if (location) {
-      filter.location = { $regex: location, $options: "i" };
+      filter.location = { $regex: escapeRegex(location), $options: "i" };
     }
 
     if (category) {
       filter.category = category;
     }
 
-    const tuitions = await getAppDb()
-      .collection("tuitions")
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .toArray();
+    const hasPagination =
+      req.query.page !== undefined || req.query.limit !== undefined;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(
+      50,
+      Math.max(1, parseInt(req.query.limit, 10) || 9)
+    );
+    const skip = (page - 1) * limit;
 
-    res.status(200).json({
+    const collection = getAppDb().collection("tuitions");
+    const [tuitions, total] = await Promise.all([
+      collection
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      collection.countDocuments(filter),
+    ]);
+
+    const normalizedTuitions = tuitions.map(normalizeTuition);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const payload = {
       success: true,
-      count: tuitions.length,
-      tuitions,
-    });
+      data: normalizedTuitions,
+      tuitions: normalizedTuitions,
+      total,
+      page,
+      limit,
+      totalPages,
+      count: total,
+    };
+
+    if (!hasPagination) {
+      // Keep legacy compatibility for callers that expect the old shape.
+      return res.status(200).json(payload);
+    }
+
+    return res.status(200).json(payload);
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -89,7 +140,7 @@ router.get("/my-tuitions", verifyToken, verifyTutor, async (req, res) => {
 
     res.status(200).json({
       success: true,
-      tuitions,
+      tuitions: tuitions.map(normalizeTuition),
     });
   } catch (error) {
     res.status(500).json({
@@ -125,7 +176,7 @@ router.get("/:id", async (req, res) => {
 
     res.status(200).json({
       success: true,
-      tuition,
+      tuition: normalizeTuition(tuition),
     });
   } catch (error) {
     res.status(500).json({
@@ -161,17 +212,22 @@ router.post("/", verifyToken, verifyTutor, async (req, res) => {
       }
     }
 
+    const fee = Number(data.monthlyFee ?? data.salary);
+    const bannerImage = data.bannerImage || data.banner || "";
+
     const tuition = {
       title: data.title.trim(),
       subject: data.subject.trim(),
       classLevel: data.classLevel.trim(),
       mode: data.mode,
       location: data.location.trim(),
-      salary: Number(data.salary),
+      monthlyFee: fee,
+      salary: fee,
       daysPerWeek: Number(data.daysPerWeek),
       description: data.description.trim(),
       category: data.category || "General",
-      banner: data.banner || "",
+      bannerImage,
+      banner: bannerImage,
       tutorId: req.user.id,
       tutorName: req.user.name,
       tutorEmail: req.user.email,
@@ -186,10 +242,10 @@ router.post("/", verifyToken, verifyTutor, async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Tuition submitted for admin approval",
-      tuition: {
+      tuition: normalizeTuition({
         ...tuition,
         _id: result.insertedId,
-      },
+      }),
     });
   } catch (error) {
     console.error("Create Tuition Error:", error);
@@ -212,12 +268,54 @@ router.patch("/:id", verifyToken, verifyTutor, async (req, res) => {
 
     const data = req.body;
 
+    // Allow owner to toggle isActive without sending full tuition payload.
+    if (
+      typeof data.isActive === "boolean" &&
+      data.title === undefined &&
+      data.subject === undefined &&
+      data.classLevel === undefined &&
+      data.mode === undefined &&
+      data.description === undefined &&
+      data.location === undefined &&
+      data.salary === undefined &&
+      data.daysPerWeek === undefined
+    ) {
+      const result = await getAppDb().collection("tuitions").updateOne(
+        {
+          _id: new ObjectId(req.params.id),
+          tutorId: req.user.id,
+        },
+        {
+          $set: {
+            isActive: data.isActive,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      if (!result.matchedCount) {
+        return res.status(404).json({
+          success: false,
+          message: "Tuition not found or unauthorized",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Tuition ${data.isActive ? "activated" : "deactivated"} successfully`,
+        isActive: data.isActive,
+      });
+    }
+
     if (!validTuition(data)) {
       return res.status(400).json({
         success: false,
         message: "Please provide all required tuition information",
       });
     }
+
+    const fee = Number(data.monthlyFee ?? data.salary);
+    const bannerImage = data.bannerImage || data.banner || "";
 
     const result = await getAppDb().collection("tuitions").updateOne(
       {
@@ -231,11 +329,13 @@ router.patch("/:id", verifyToken, verifyTutor, async (req, res) => {
           classLevel: data.classLevel.trim(),
           mode: data.mode,
           location: data.location.trim(),
-          salary: Number(data.salary),
+          monthlyFee: fee,
+          salary: fee,
           daysPerWeek: Number(data.daysPerWeek),
           description: data.description.trim(),
           category: data.category || "General",
-          banner: data.banner || "",
+          bannerImage,
+          banner: bannerImage,
           approvalStatus: "pending",
           updatedAt: new Date(),
         },
@@ -290,6 +390,57 @@ router.delete("/:id", verifyToken, verifyTutor, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to delete tuition",
+    });
+  }
+});
+
+router.patch("/:id/active", verifyToken, verifyTutor, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid tuition ID",
+      });
+    }
+
+    const { isActive } = req.body;
+
+    if (typeof isActive !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "isActive must be true or false",
+      });
+    }
+
+    const result = await getAppDb().collection("tuitions").updateOne(
+      {
+        _id: new ObjectId(req.params.id),
+        tutorId: req.user.id,
+      },
+      {
+        $set: {
+          isActive,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    if (!result.matchedCount) {
+      return res.status(404).json({
+        success: false,
+        message: "Tuition not found or unauthorized",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Tuition ${isActive ? "activated" : "deactivated"} successfully`,
+      isActive,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update tuition active status",
     });
   }
 });

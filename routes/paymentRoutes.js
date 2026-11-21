@@ -14,6 +14,110 @@ const getStripe = () => {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
 };
 
+const fulfillPaidCheckoutSession = async (session, { expectedUserId } = {}) => {
+  if (!session || session.payment_status !== "paid") {
+    return { ok: false, status: 400, message: "Payment is not completed" };
+  }
+
+  const { userId, userName, userEmail, role, plan, planName } =
+    session.metadata || {};
+
+  if (expectedUserId && userId !== expectedUserId) {
+    return { ok: false, status: 403, message: "Payment session does not belong to this user" };
+  }
+
+  if (
+    !userId ||
+    !["student", "tutor"].includes(role) ||
+    plan !== "pro" ||
+    session.mode !== "payment"
+  ) {
+    return { ok: false, status: 400, message: "Invalid checkout metadata" };
+  }
+
+  const expectedAmount = role === "tutor" ? 1500 : 1000;
+
+  if (
+    session.amount_total !== expectedAmount ||
+    session.currency !== "usd"
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Payment amount or currency verification failed",
+    };
+  }
+
+  const db = getAppDb();
+
+  const userResult = await db.collection("users").updateOne(
+    {
+      _id: userId,
+      role,
+      isActive: { $ne: false },
+    },
+    {
+      $set: {
+        plan: "pro",
+        updatedAt: new Date(),
+      },
+    }
+  );
+
+  if (userResult.matchedCount === 0) {
+    return {
+      ok: false,
+      status: 400,
+      message: "User not found or role verification failed",
+    };
+  }
+
+  const paidAt = session.created
+    ? new Date(session.created * 1000)
+    : new Date();
+
+  const paymentEmail =
+    userEmail ||
+    session.customer_details?.email ||
+    session.customer_email ||
+    "";
+
+  const paymentName =
+    userName || session.customer_details?.name || "Unknown User";
+
+  const transactionId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id || session.id;
+
+  await db.collection("payments").updateOne(
+    { stripeSessionId: session.id },
+    {
+      $setOnInsert: {
+        userId,
+        userName: paymentName,
+        userEmail: paymentEmail,
+        userRole: role,
+        planName:
+          planName || (role === "tutor" ? "Pro Tutor" : "Pro Student"),
+        amount: expectedAmount / 100,
+        currency: session.currency,
+        transactionId,
+        stripeSessionId: session.id,
+        paymentStatus: "paid",
+        paidAt,
+        email: paymentEmail,
+        role,
+        plan,
+        createdAt: paidAt,
+      },
+    },
+    { upsert: true }
+  );
+
+  return { ok: true, plan: "pro", userId };
+};
+
 router.post("/create-checkout-session", verifyToken, async (req, res) => {
   try {
     const user = req.user;
@@ -124,106 +228,13 @@ router.post("/webhook", async (req, res) => {
         return res.status(200).json({ received: true });
       }
 
-      const {
-        userId,
-        userName,
-        userEmail,
-        role,
-        plan,
-        planName,
-      } = session.metadata || {};
-
-      if (
-        !userId ||
-        !["student", "tutor"].includes(role) ||
-        plan !== "pro" ||
-        session.mode !== "payment"
-      ) {
-        return res.status(400).json({
+      const result = await fulfillPaidCheckoutSession(session);
+      if (!result.ok) {
+        return res.status(result.status).json({
           success: false,
-          message: "Invalid checkout metadata",
+          message: result.message,
         });
       }
-
-      const expectedAmount = role === "tutor" ? 1500 : 1000;
-
-      if (
-        session.amount_total !== expectedAmount ||
-        session.currency !== "usd"
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Payment amount or currency verification failed",
-        });
-      }
-
-      const db = getAppDb();
-
-      const userResult = await db.collection("users").updateOne(
-        {
-          _id: userId,
-          role,
-          isActive: { $ne: false },
-        },
-        {
-          $set: {
-            plan: "pro",
-            updatedAt: new Date(),
-          },
-        }
-      );
-
-      if (userResult.matchedCount === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "User not found or role verification failed",
-        });
-      }
-
-      const paidAt = session.created
-        ? new Date(session.created * 1000)
-        : new Date();
-
-      const paymentEmail =
-        userEmail ||
-        session.customer_details?.email ||
-        session.customer_email ||
-        "";
-
-      const paymentName =
-        userName ||
-        session.customer_details?.name ||
-        "Unknown User";
-
-      const transactionId =
-        typeof session.payment_intent === "string"
-          ? session.payment_intent
-          : session.payment_intent?.id || session.id;
-
-      await db.collection("payments").updateOne(
-        { stripeSessionId: session.id },
-        {
-          $setOnInsert: {
-            userId,
-            userName: paymentName,
-            userEmail: paymentEmail,
-            userRole: role,
-            planName:
-              planName || (role === "tutor" ? "Pro Tutor" : "Pro Student"),
-            amount: expectedAmount / 100,
-            currency: session.currency,
-            transactionId,
-            stripeSessionId: session.id,
-            paymentStatus: "paid",
-            paidAt,
-            email: paymentEmail,
-            role,
-            plan,
-            createdAt: paidAt,
-          },
-        },
-        { upsert: true }
-      );
     }
 
     return res.status(200).json({ received: true });
@@ -233,6 +244,44 @@ router.post("/webhook", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Webhook processing failed",
+    });
+  }
+});
+
+router.get("/verify-session", verifyToken, async (req, res) => {
+  try {
+    const sessionId = String(req.query.session_id || "").trim();
+
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: "session_id is required",
+      });
+    }
+
+    const stripe = getStripe();
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    const result = await fulfillPaidCheckoutSession(session, {
+      expectedUserId: req.user.id,
+    });
+
+    if (!result.ok) {
+      return res.status(result.status).json({
+        success: false,
+        message: result.message,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      plan: result.plan,
+    });
+  } catch (error) {
+    console.error("Verify Session Error:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to verify payment session",
     });
   }
 });

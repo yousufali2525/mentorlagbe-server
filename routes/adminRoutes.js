@@ -8,6 +8,19 @@ import {
 
 const router = express.Router();
 
+const normalizeTuition = (tuition) => {
+  if (!tuition || typeof tuition !== "object") return tuition;
+  const monthlyFee = tuition.monthlyFee ?? tuition.salary ?? null;
+  const bannerImage = tuition.bannerImage ?? tuition.banner ?? "";
+  return {
+    ...tuition,
+    monthlyFee,
+    salary: tuition.salary ?? monthlyFee,
+    bannerImage,
+    banner: tuition.banner ?? bannerImage,
+  };
+};
+
 router.use(verifyToken, verifyAdmin);
 
 router.get("/stats", async (req, res) => {
@@ -266,6 +279,64 @@ router.patch("/users/:id/role", async (req, res) => {
   }
 });
 
+router.get("/tuitions", async (req, res) => {
+  try {
+    const db = getAppDb();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+
+    if (["pending", "approved", "rejected"].includes(req.query.status)) {
+      filter.approvalStatus = req.query.status;
+    }
+
+    if (req.query.search) {
+      const search = String(req.query.search).trim().slice(0, 100);
+      if (search) {
+        const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const searchRegex = { $regex: escapedSearch, $options: "i" };
+        filter.$or = [
+          { title: searchRegex },
+          { subject: searchRegex },
+          { tutorName: searchRegex },
+          { tutorEmail: searchRegex },
+        ];
+      }
+    }
+
+    const [tuitions, total] = await Promise.all([
+      db
+        .collection("tuitions")
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      db.collection("tuitions").countDocuments(filter),
+    ]);
+
+    const normalizedTuitions = tuitions.map(normalizeTuition);
+
+    res.status(200).json({
+      success: true,
+      tuitions: normalizedTuitions,
+      data: normalizedTuitions,
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    });
+  } catch (error) {
+    console.error("Admin tuitions error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch tuitions",
+    });
+  }
+});
+
 router.get("/tuitions/pending", async (req, res) => {
   try {
     const db = getAppDb();
@@ -279,7 +350,7 @@ router.get("/tuitions/pending", async (req, res) => {
     res.status(200).json({
       success: true,
       total: tuitions.length,
-      tuitions,
+      tuitions: tuitions.map(normalizeTuition),
     });
   } catch (error) {
     console.error("Admin pending tuitions error:", error);
