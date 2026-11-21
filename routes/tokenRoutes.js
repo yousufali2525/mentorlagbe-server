@@ -3,7 +3,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { fromNodeHeaders } from "better-auth/node";
 import { getAuth } from "../auth.js";
-import { getAppDb } from "../config/db.js";
+import { getAppDb, getAuthDb } from "../config/db.js";
 
 const router = express.Router();
 
@@ -16,11 +16,45 @@ router.get("/", async (req, res) => {
       });
     }
 
-    const session = await getAuth().api.getSession({
+    let session = await getAuth().api.getSession({
       headers: fromNodeHeaders(req.headers),
     });
 
-    if (!session || !session.user) {
+    // Cross-domain fallback: accept Better Auth session token from Authorization bearer.
+    if (!session?.user) {
+      const authHeader = req.headers.authorization;
+      if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+        const bearerToken = authHeader.slice(7).trim();
+        if (bearerToken) {
+          // Try Better Auth API with bearer header (works if bearer plugin/config accepts it).
+          try {
+            session = await getAuth().api.getSession({
+              headers: new Headers({ authorization: `Bearer ${bearerToken}` }),
+            });
+          } catch {
+            session = null;
+          }
+
+          // Fallback: resolve session token directly from Better Auth session collection.
+          if (!session?.user) {
+            const sessionDoc = await getAuthDb()
+              .collection("session")
+              .findOne({ token: bearerToken });
+
+            const expiresAt = sessionDoc?.expiresAt
+              ? new Date(sessionDoc.expiresAt)
+              : null;
+            const notExpired = !expiresAt || expiresAt.getTime() > Date.now();
+
+            if (sessionDoc?.userId && notExpired) {
+              session = { user: { id: String(sessionDoc.userId) } };
+            }
+          }
+        }
+      }
+    }
+
+    if (!session?.user) {
       return res.status(401).json({
         success: false,
         message: "Please login first",

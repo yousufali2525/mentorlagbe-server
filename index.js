@@ -18,6 +18,8 @@ import adminRoutes from "./routes/adminRoutes.js";
 
 const app = express();
 
+app.set("trust proxy", 1);
+
 const allowedOrigins = (process.env.CLIENT_URL || "")
   .split(",")
   .map((url) => url.trim().replace(/\/+$/, ""))
