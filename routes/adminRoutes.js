@@ -227,10 +227,10 @@ router.patch("/users/:id/role", async (req, res) => {
   try {
     const { role } = req.body;
 
-    if (!["student", "tutor"].includes(role)) {
+    if (!["student", "tutor", "admin"].includes(role)) {
       return res.status(400).json({
         success: false,
-        message: "Role must be student or tutor",
+        message: "Role must be student, tutor, or admin",
       });
     }
 
@@ -249,10 +249,15 @@ router.patch("/users/:id/role", async (req, res) => {
       });
     }
 
-    if (targetUser.role === "admin") {
+    if (
+      req.user?.id &&
+      userId === String(req.user.id) &&
+      targetUser.role === "admin" &&
+      role !== "admin"
+    ) {
       return res.status(403).json({
         success: false,
-        message: "Admin role cannot be changed here",
+        message: "You cannot remove your own admin role",
       });
     }
 
@@ -269,6 +274,7 @@ router.patch("/users/:id/role", async (req, res) => {
     res.status(200).json({
       success: true,
       message: "User role updated successfully",
+      role,
     });
   } catch (error) {
     console.error("Admin user role error:", error);
@@ -368,7 +374,7 @@ router.get("/payments", async (req, res) => {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const skip = (page - 1) * limit;
 
-    const [payments, totalPayments] = await Promise.all([
+    const [payments, totalPayments, revenueResult] = await Promise.all([
       db.collection("payments")
         .find({})
         .sort({ createdAt: -1 })
@@ -377,11 +383,23 @@ router.get("/payments", async (req, res) => {
         .toArray(),
 
       db.collection("payments").countDocuments(),
+
+      db.collection("payments")
+        .aggregate([
+          {
+            $group: {
+              _id: null,
+              totalRevenue: { $sum: "$amount" },
+            },
+          },
+        ])
+        .toArray(),
     ]);
 
     res.status(200).json({
       success: true,
       payments,
+      totalRevenue: revenueResult[0]?.totalRevenue || 0,
       pagination: {
         totalPayments,
         currentPage: page,

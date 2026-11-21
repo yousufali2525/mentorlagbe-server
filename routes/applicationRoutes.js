@@ -10,10 +10,23 @@ import {
 
 const router = express.Router();
 
+const readText = (...values) => {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+};
+
 router.post("/", verifyToken, verifyStudent, async (req, res) => {
   try {
     const db = getAppDb();
-    const { tuitionId, message } = req.body;
+    const {
+      tuitionId,
+      studentPhone,
+      preferredSchedule,
+      studentNote,
+      message,
+    } = req.body || {};
 
     if (!tuitionId || !ObjectId.isValid(tuitionId)) {
       return res.status(400).json({
@@ -22,10 +35,38 @@ router.post("/", verifyToken, verifyStudent, async (req, res) => {
       });
     }
 
-    if (message !== undefined && typeof message !== "string") {
+    const stringFields = {
+      studentPhone,
+      preferredSchedule,
+      studentNote,
+      message,
+    };
+
+    for (const [field, value] of Object.entries(stringFields)) {
+      if (value !== undefined && value !== null && typeof value !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: `${field} must be a string`,
+        });
+      }
+    }
+
+    const phone = readText(studentPhone);
+    const schedule = readText(preferredSchedule);
+    const note = readText(studentNote, message);
+
+    // Legacy clients sent only `message`. Keep that shape working by treating
+    // it as the learning note; new requests must include phone and schedule.
+    const legacyNoteOnly =
+      studentPhone === undefined &&
+      preferredSchedule === undefined &&
+      studentNote === undefined &&
+      typeof message === "string";
+
+    if (!legacyNoteOnly && (!phone || !schedule)) {
       return res.status(400).json({
         success: false,
-        message: "Message must be a string",
+        message: "studentPhone and preferredSchedule are required",
       });
     }
 
@@ -61,18 +102,29 @@ router.post("/", verifyToken, verifyStudent, async (req, res) => {
       });
     }
 
+    const appliedAt = new Date();
+
     const application = {
       tuitionId,
-      studentId: req.user.id,
-      studentName: req.user.name,
-      studentEmail: req.user.email,
-      tutorId: tuition.tutorId,
-      tutorName: tuition.tutorName || "",
+      tuitionTitle: tuition.title || "",
+      subject: tuition.subject || "",
+      monthlyFee: tuition.monthlyFee ?? tuition.salary ?? null,
       tutorEmail: tuition.tutorEmail || "",
-      message: message ? message.trim() : "",
+      studentName: req.user.name || "",
+      studentEmail: req.user.email || "",
+      studentPhone: phone,
+      preferredSchedule: schedule,
+      studentNote: note,
       status: "pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      appliedAt,
+
+      // Retained for existing dashboards and duplicate-prevention queries.
+      studentId: req.user.id,
+      tutorId: tuition.tutorId || "",
+      tutorName: tuition.tutorName || "",
+      message: note,
+      createdAt: appliedAt,
+      updatedAt: appliedAt,
     };
 
     const result = await db.collection("applications").insertOne(application);
@@ -125,6 +177,9 @@ router.get("/my-applications", verifyToken, verifyStudent, async (req, res) => {
           });
         }
 
+        const studentNote =
+          application.studentNote || application.message || "";
+
         return {
           ...application,
           tuition: tuition
@@ -152,6 +207,15 @@ router.get("/my-applications", verifyToken, verifyStudent, async (req, res) => {
             tuition?.tutorEmail ||
             application.tutorEmail ||
             "Not available",
+          studentName:
+            application.studentName || req.user.name || "Not available",
+          studentEmail:
+            application.studentEmail || req.user.email || "Not available",
+          studentPhone: application.studentPhone || "",
+          preferredSchedule: application.preferredSchedule || "",
+          studentNote,
+          message: studentNote,
+          appliedAt: application.appliedAt || application.createdAt,
           tuitionTitle:
             tuition?.title ||
             application.tuitionTitle ||
@@ -221,16 +285,70 @@ router.delete("/:id", verifyToken, verifyStudent, async (req, res) => {
 
 router.get("/tutor-applicants", verifyToken, verifyTutor, async (req, res) => {
   try {
-    const applications = await getAppDb()
+    const db = getAppDb();
+    const applications = await db
       .collection("applications")
       .find({ tutorId: req.user.id })
       .sort({ createdAt: -1 })
       .toArray();
 
+    const enrichedApplications = await Promise.all(
+      applications.map(async (application) => {
+        let tuition = null;
+
+        if (
+          application.tuitionId &&
+          ObjectId.isValid(application.tuitionId)
+        ) {
+          tuition = await db.collection("tuitions").findOne({
+            _id: new ObjectId(application.tuitionId),
+          });
+        }
+
+        const studentNote =
+          application.studentNote || application.message || "";
+
+        return {
+          ...application,
+          tuition: tuition
+            ? {
+                _id: tuition._id,
+                title: tuition.title || "Tuition Application",
+                subject: tuition.subject || "Subject unavailable",
+                monthlyFee: tuition.salary ?? tuition.monthlyFee,
+                tutorEmail: tuition.tutorEmail || "",
+              }
+            : null,
+          tuitionTitle:
+            tuition?.title ||
+            application.tuitionTitle ||
+            "Tuition Application",
+          subject:
+            tuition?.subject ||
+            application.subject ||
+            "Subject unavailable",
+          monthlyFee:
+            tuition?.salary ??
+            tuition?.monthlyFee ??
+            application.monthlyFee ??
+            null,
+          tutorEmail:
+            tuition?.tutorEmail || application.tutorEmail || "",
+          studentName: application.studentName || "Student",
+          studentEmail: application.studentEmail || "",
+          studentPhone: application.studentPhone || "",
+          preferredSchedule: application.preferredSchedule || "",
+          studentNote,
+          message: studentNote,
+          appliedAt: application.appliedAt || application.createdAt,
+        };
+      })
+    );
+
     res.status(200).json({
       success: true,
-      total: applications.length,
-      data: applications,
+      total: enrichedApplications.length,
+      data: enrichedApplications,
     });
   } catch (error) {
     console.error("Fetch Applicants Error:", error.message);
